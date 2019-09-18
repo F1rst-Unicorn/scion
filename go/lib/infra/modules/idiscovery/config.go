@@ -45,6 +45,8 @@ type Config struct {
 	// Dynamic contains the parameters for fetching the dynamic
 	// topology from the discovery service.
 	Dynamic FetchConfig
+
+	Bootstrap BootstrapConfig
 }
 
 func (cfg *Config) InitDefaults() {
@@ -52,7 +54,7 @@ func (cfg *Config) InitDefaults() {
 }
 
 func (cfg *Config) Validate() error {
-	return config.ValidateAll(&cfg.Static, &cfg.Dynamic)
+	return config.ValidateAll(&cfg.Static, &cfg.Dynamic, &cfg.Bootstrap)
 }
 
 func (cfg *Config) Sample(dst io.Writer, path config.Path, ctx config.CtxMap) {
@@ -61,6 +63,26 @@ func (cfg *Config) Sample(dst io.Writer, path config.Path, ctx config.CtxMap) {
 
 func (cfg *Config) ConfigName() string {
 	return "discovery"
+}
+
+var _ config.Config = (*BootstrapConfig)(nil)
+
+type BootstrapConfig struct {
+	HintsPath string
+}
+func (cfg *BootstrapConfig) InitDefaults() {}
+
+func (cfg *BootstrapConfig) Validate() error {
+	return nil
+}
+
+func (cfg *BootstrapConfig) Sample(dst io.Writer, path config.Path, ctx config.CtxMap) {
+	config.WriteString(dst, bootstrapSample)
+}
+
+
+func (cfg *BootstrapConfig) ConfigName() string {
+	return "bootstrap"
 }
 
 var _ config.Config = (*StaticConfig)(nil)

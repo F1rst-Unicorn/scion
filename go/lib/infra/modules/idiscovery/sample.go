@@ -14,6 +14,13 @@
 
 package idiscovery
 
+const bootstrapSample = `
+# Directory containing files with plain IP addresses or domains
+# which are treated as discovery servers. Empty path disables
+# bootstrapping. (default "")
+HintsPath = ""
+`
+
 const staticSample = `
 # Enable periodic fetching of the static topology. (default false)
 Enable = false

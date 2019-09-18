@@ -3,7 +3,7 @@ load("//:scion.bzl", "scion_go_binary")
 
 go_library(
     name = "go_default_library",
-    srcs = ["main.go"],
+    srcs = ["main.go", "bootstrap.go"],
     importpath = "github.com/scionproto/scion/go/sciond",
     visibility = ["//visibility:private"],
     deps = [

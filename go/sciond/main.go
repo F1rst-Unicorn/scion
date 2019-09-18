@@ -221,7 +221,10 @@ func setup() error {
 	itopo.Init("", proto.ServiceType_unset, itopo.Callbacks{})
 	topo, err := topology.LoadFromFile(cfg.General.Topology)
 	if err != nil {
-		return common.NewBasicError("Unable to load topology", err)
+		topo, err = tryBootstrapping(cfg.Discovery.Bootstrap.HintsPath)
+		if err != nil {
+			return common.NewBasicError("Unable to load topology", err)
+		}
 	}
 	if _, _, err := itopo.SetStatic(topo, false); err != nil {
 		return common.NewBasicError("Unable to set initial static topology", err)
