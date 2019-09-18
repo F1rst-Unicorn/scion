@@ -58,7 +58,7 @@ func (cfg *Config) Validate() error {
 }
 
 func (cfg *Config) Sample(dst io.Writer, path config.Path, ctx config.CtxMap) {
-	config.WriteSample(dst, path, ctx, &cfg.Static, &cfg.Dynamic)
+	config.WriteSample(dst, path, ctx, &cfg.Static, &cfg.Dynamic, &cfg.Bootstrap)
 }
 
 func (cfg *Config) ConfigName() string {

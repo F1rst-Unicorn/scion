@@ -417,6 +417,14 @@ func (store *Store) LoadAuthoritativeCrypto(dir string) error {
 }
 
 func (store *Store) LoadAuthoritativeTRC(dir string) error {
+	return store.loadAuthoritativeTRCInternal(dir, true)
+}
+
+func (store *Store) LoadAuthoritativeTRCWithNetwork(dir string) error {
+	return store.loadAuthoritativeTRCInternal(dir, false)
+}
+
+func (store *Store) loadAuthoritativeTRCInternal(dir string, localOnly bool) error {
 	fileTRC, err := trc.TRCFromDir(
 		dir,
 		store.ia.I,
@@ -429,7 +437,7 @@ func (store *Store) LoadAuthoritativeTRC(dir string) error {
 
 	ctx, cancelF := context.WithTimeout(context.Background(), time.Second)
 	defer cancelF()
-	opts := infra.TRCOpts{TrustStoreOpts: infra.TrustStoreOpts{LocalOnly: true}}
+	opts := infra.TRCOpts{TrustStoreOpts: infra.TrustStoreOpts{LocalOnly: localOnly}}
 	dbTRC, err := store.getTRC(ctx, store.ia.I, scrypto.Version(scrypto.LatestVer), opts, nil)
 	switch {
 	case err != nil && common.GetErrorMsg(err) != ErrNotFoundLocally:

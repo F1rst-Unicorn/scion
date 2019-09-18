@@ -105,12 +105,6 @@ func realMain() int {
 	defer trustDB.Close()
 	trustConf := trust.Config{TopoProvider: itopo.Provider()}
 	trustStore := trust.NewStore(trustDB, itopo.Get().ISD_AS, trustConf, log.Root())
-	err = trustStore.LoadAuthoritativeTRC(filepath.Join(cfg.General.ConfigDir, "certs"))
-	if err != nil {
-		log.Crit("Unable to load local TRC", "err", err)
-		return 1
-	}
-
 	tracer, trCloser, err := cfg.Tracing.NewTracer(cfg.General.ID)
 	if err != nil {
 		log.Crit("Unable to create tracer", "err", err)
@@ -138,6 +132,17 @@ func realMain() int {
 		log.Crit(infraenv.ErrAppUnableToInitMessenger, "err", err)
 		return 1
 	}
+	trcPath := filepath.Join(cfg.General.ConfigDir, "certs")
+	if cfg.Discovery.Bootstrap.HintsPath != "" {
+		err = trustStore.LoadAuthoritativeTRCWithNetwork(trcPath)
+	} else {
+		err = trustStore.LoadAuthoritativeTRC(trcPath)
+	}
+	if err != nil {
+		log.Crit("Unable to load local TRC", "err", err)
+		return 1
+	}
+
 	// Route messages to their correct handlers
 	handlers := servers.HandlerMap{
 		proto.SCIONDMsg_Which_pathReq: &servers.PathRequestHandler{
