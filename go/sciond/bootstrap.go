@@ -30,15 +30,18 @@ const (
 	discoveryPort uint16 = 8041
 )
 
-func tryBootstrapping(hintDirectory string) (*topology.Topo, error) {
+func tryBootstrapping(hintDirectory string, targetTopologyPath string) (*topology.Topo, error) {
 	addresses := readLinesFromAllFiles(hintDirectory)
 	log.Trace("hint addresses: ", "addresses", addresses)
 	var topologies []*topology.Topo
+	var rawTopologies []common.RawBytes
+	chosenIndex := 0
 
 	for i := 0; i < len(addresses); i++ {
-		topo := fetchTopology(addresses[i])
-		if topo != nil {
+		topo, raw := fetchTopology(addresses[i])
+		if topo != nil && raw != nil {
 			topologies = append(topologies, topo)
+			rawTopologies = append(rawTopologies, raw)
 		}
 	}
 
@@ -46,14 +49,18 @@ func tryBootstrapping(hintDirectory string) (*topology.Topo, error) {
 	case 0:
 		return nil, common.NewBasicError("Bootstrapping failed, no topologies found in '" + hintDirectory + "'", nil)
 	case 1:
-		return topologies[0], nil
 	default:
 		log.Info("Found several topologies, using first one")
-		return topologies[0], nil
 	}
+
+	if targetTopologyPath != "" {
+		ioutil.WriteFile(targetTopologyPath, rawTopologies[chosenIndex], 0644)
+	}
+
+	return topologies[chosenIndex], nil
 }
 
-func fetchTopology(address string) *topology.Topo {
+func fetchTopology(address string) (*topology.Topo, common.RawBytes) {
 	log.Debug("Trying to fetch from " + address)
 
 	ctx, cancelF := context.WithTimeout(context.Background(), 2 * time.Second)
@@ -63,18 +70,18 @@ func fetchTopology(address string) *topology.Topo {
 	ip := addr.HostFromIPStr(address)
 
 	if ip == nil {
-		return nil
+		return nil, nil
 	}
 
-	topo, err := discovery.FetchTopo(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
+	topo, raw, err := discovery.FetchTopoRaw(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
 
 	if err != nil {
 		log.Debug("Nothing was found")
-		return nil
+		return nil, nil
 	}
 
 	log.Debug("candidate topology found")
-	return topo
+	return topo, raw
 }
 
 func readLinesFromAllFiles(hintDirectory string) []string {

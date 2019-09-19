@@ -226,7 +226,7 @@ func setup() error {
 	itopo.Init("", proto.ServiceType_unset, itopo.Callbacks{})
 	topo, err := topology.LoadFromFile(cfg.General.Topology)
 	if err != nil {
-		topo, err = tryBootstrapping(cfg.Discovery.Bootstrap.HintsPath)
+		topo, err = tryBootstrapping(cfg.Discovery.Bootstrap.HintsPath, cfg.Discovery.Bootstrap.Filename)
 		if err != nil {
 			return common.NewBasicError("Unable to load topology", err)
 		}

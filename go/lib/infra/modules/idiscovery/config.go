@@ -69,6 +69,8 @@ var _ config.Config = (*BootstrapConfig)(nil)
 
 type BootstrapConfig struct {
 	HintsPath string
+
+	Filename string
 }
 func (cfg *BootstrapConfig) InitDefaults() {}
 

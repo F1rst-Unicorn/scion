@@ -19,6 +19,10 @@ const bootstrapSample = `
 # which are treated as discovery servers. Empty path disables
 # bootstrapping. (default "")
 HintsPath = ""
+
+# After successful bootstrapping the topology is stored here.
+# Empty string disables storing. (default "")
+Filename = ""
 `
 
 const staticSample = `
