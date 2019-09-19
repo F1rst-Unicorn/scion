@@ -22,6 +22,7 @@ from lib.packet.scion_addr import ISD_AS
 from topology.net import AddressProxy
 
 COMMON_DIR = 'endhost'
+BOOTSTRAP_DIR = 'bootstrap'
 
 SCION_SERVICE_NAMES = (
     "BeaconService",

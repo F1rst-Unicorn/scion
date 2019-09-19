@@ -67,6 +67,8 @@ def add_arguments(parser):
                         help='Path Server implementation to use ("go or "py")')
     parser.add_argument('-ds', '--discovery', action='store_true',
                         help='Generate discovery service')
+    parser.add_argument('--bootstrap', action='store_true',
+                        help='Generate bootstrapping client')
     parser.add_argument('-f', '--svcfrac', type=float, default=0.4,
                         help='Attempt SVC resolution in RPC calls for a fraction of\
                         available timeout')

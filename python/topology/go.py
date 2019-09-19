@@ -28,6 +28,7 @@ from topology.common import (
     ArgsTopoDicts,
     BR_CONFIG_NAME,
     BS_CONFIG_NAME,
+    BOOTSTRAP_DIR,
     COMMON_DIR,
     CS_CONFIG_NAME,
     DISP_CONFIG_NAME,
@@ -166,6 +167,12 @@ class GoGenerator(object):
             sciond_conf = self._build_sciond_conf(topo_id, topo["ISD_AS"], base)
             write_file(os.path.join(base, COMMON_DIR, SD_CONFIG_NAME), toml.dumps(sciond_conf))
 
+            if self.args.bootstrap:
+                bootstrap_conf = self._build_bootstrap_conf(topo_id, topo["ISD_AS"], base)
+                write_file(os.path.join(base, BOOTSTRAP_DIR, SD_CONFIG_NAME), toml.dumps(bootstrap_conf))
+                for name, discovery_service in topo["DiscoveryService"].items():
+                    write_file(os.path.join(base, BOOTSTRAP_DIR, "hints", name), str(discovery_service["Addrs"]["IPv4"]["Public"]["Addr"].ip))
+
     def _build_sciond_conf(self, topo_id, ia, base):
         name = sciond_name(topo_id)
         config_dir = '/share/conf' if self.args.docker else os.path.join(base, COMMON_DIR)
@@ -190,6 +197,47 @@ class GoGenerator(object):
             'metrics': {
                 'Prometheus': prom_addr_sciond(self.args.docker, topo_id,
                                                self.args.networks, SCIOND_PROM_PORT)
+            },
+            'quic': self._quic_conf_entry(SD_QUIC_PORT, self.args.svcfrac),
+        }
+        return raw_entry
+
+    def _build_bootstrap_conf(self, topo_id, ia, base):
+        name = sciond_name(topo_id) + "-bootstrap"
+        config_dir = '/share/conf' if self.args.docker else os.path.join(base, BOOTSTRAP_DIR)
+        raw_entry = {
+            'general': {
+                'ID': name,
+                'ConfigDir': config_dir,
+                'ReconnectToDispatcher': True,
+            },
+            'logging': self._log_entry(name),
+            'trustDB': trust_db_conf_entry(self.args, name),
+            'discovery': {
+                'static': {
+                    'Enable': True,
+                    'Filename': os.path.join(config_dir, "topology.json"),
+                },
+                'dynamic': {
+                    'Enable': True,
+                },
+                'bootstrap': {
+                    'HintsPath': os.path.join(config_dir, "hints"),
+                }
+            },
+            'sd': {
+                'Reliable': os.path.join(SCIOND_API_SOCKDIR, "%s.sock" % name),
+                'Unix': os.path.join(SCIOND_API_SOCKDIR, "%s.unix" % name),
+                'Public': '%s,[127.0.0.1]:0' % ia,
+                'pathDB': {
+                    'Connection': os.path.join(self.db_dir, '%s.path.db' % name),
+                },
+            },
+            'tracing': {
+                'Enabled': False
+            },
+            'metrics': {
+                'Prometheus': ""
             },
             'quic': self._quic_conf_entry(SD_QUIC_PORT, self.args.svcfrac),
         }

@@ -214,10 +214,10 @@ class TopoGenerator(object):
                 topo_id, as_conf, conf_key, def_num, nick, topo_key)
         # The discovery service does not run on top of the dispatcher.
         self._gen_srv_entry(topo_id, as_conf, "discovery_servers", DEFAULT_DISCOVERY_SERVERS,
-                            "ds", "DiscoveryService", lambda elem_id: elem_id)
+                            "ds", "DiscoveryService", lambda elem_id: elem_id, 8041 if self.args.bootstrap else None)
 
     def _gen_srv_entry(self, topo_id, as_conf, conf_key, def_num, nick,
-                       topo_key, reg_id_func=None):
+                       topo_key, reg_id_func=None, port=None):
         count = self._srv_count(as_conf, conf_key, def_num)
         for i in range(1, count + 1):
             elem_id = "%s%s-%s" % (nick, topo_id.file_fmt(), i)
@@ -227,7 +227,7 @@ class TopoGenerator(object):
                     self.addr_type: {
                         'Public': {
                             'Addr': self._reg_addr(topo_id, reg_id),
-                            'L4Port': self.args.port_gen.register(elem_id),
+                            'L4Port': port if port is not None else self.args.port_gen.register(elem_id),
                         }
                     }
                 }
@@ -252,7 +252,7 @@ class TopoGenerator(object):
         }
         if go_singles.get(conf_key) == "go":
             count = 1
-        if conf_key == "discovery_servers" and not self.args.discovery:
+        if conf_key == "discovery_servers" and not (self.args.discovery or self.args.bootstrap):
             count = 0
         return count
 
