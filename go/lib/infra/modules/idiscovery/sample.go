@@ -15,14 +15,9 @@
 package idiscovery
 
 const bootstrapSample = `
-# Directory containing files with plain IP addresses or domains
-# which are treated as discovery servers. Empty path disables
-# bootstrapping. (default "")
-HintsPath = ""
-
-# After successful bootstrapping the topology is stored here.
-# Empty string disables storing. (default "")
-Filename = ""
+# Enable bootstrap mode where SCION services are automatically
+# discovered. (default false)
+Enable = false
 `
 
 const staticSample = `

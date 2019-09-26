@@ -133,11 +133,7 @@ func realMain() int {
 		return 1
 	}
 	trcPath := filepath.Join(cfg.General.ConfigDir, "certs")
-	if cfg.Discovery.Bootstrap.HintsPath != "" {
-		err = trustStore.LoadAuthoritativeTRCWithNetwork(trcPath)
-	} else {
-		err = trustStore.LoadAuthoritativeTRC(trcPath)
-	}
+	err = trustStore.LoadAuthoritativeTRC(trcPath)
 	if err != nil {
 		log.Crit("Unable to load local TRC", "err", err)
 		return 1
@@ -226,7 +222,9 @@ func setup() error {
 	itopo.Init("", proto.ServiceType_unset, itopo.Callbacks{})
 	topo, err := topology.LoadFromFile(cfg.General.Topology)
 	if err != nil {
-		topo, err = tryBootstrapping(cfg.Discovery.Bootstrap.HintsPath, cfg.Discovery.Bootstrap.Filename)
+		if cfg.Discovery.Bootstrap.Enable {
+			topo, err = tryBootstrapping()
+		}
 		if err != nil {
 			return common.NewBasicError("Unable to load topology", err)
 		}

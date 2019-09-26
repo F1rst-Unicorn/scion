@@ -15,14 +15,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"github.com/scionproto/scion/go/lib/addr"
-	"github.com/scionproto/scion/go/lib/common"
 	"github.com/scionproto/scion/go/lib/discovery"
+	"github.com/scionproto/scion/go/lib/infra/infraenv"
+	"github.com/scionproto/scion/go/lib/infra/messenger"
+	"github.com/scionproto/scion/go/lib/infra/modules/trust"
 	"github.com/scionproto/scion/go/lib/log"
 	"github.com/scionproto/scion/go/lib/topology"
-	"io/ioutil"
 	"time"
 )
 
@@ -30,93 +30,163 @@ const (
 	discoveryPort uint16 = 8041
 )
 
-func tryBootstrapping(hintDirectory string, targetTopologyPath string) (*topology.Topo, error) {
-	addresses := readLinesFromAllFiles(hintDirectory)
-	log.Trace("hint addresses: ", "addresses", addresses)
-	var topologies []*topology.Topo
-	var rawTopologies []common.RawBytes
-	chosenIndex := 0
+var (
+	channel = make(chan string)
+)
 
-	for i := 0; i < len(addresses); i++ {
-		topo, raw := fetchTopology(addresses[i])
-		if topo != nil && raw != nil {
-			topologies = append(topologies, topo)
-			rawTopologies = append(rawTopologies, raw)
+func tryBootstrapping() (*topology.Topo, error) {
+	hintGenerators := []HintGenerator{
+		&StaticHintGenerator{},
+		&DHCPHintGenerator{},
+		&RouterAdvertisementHintGenerator{},
+		&DNSServiceDiscoveryHintGenerator{}}
+	var topo *topology.Topo
+
+	for i := 0; i < len(hintGenerators); i++ {
+		x := hintGenerators[i]
+		go func() {
+			defer log.LogPanicAndExit()
+			x.Generate(channel)
+		}()
+	}
+
+	for {
+		log.Debug("Bootstrapper is waiting for hints")
+		address := <-channel
+		topo = fetchTopology(address)
+
+		if topo != nil {
+			err := fetchTRC(topo)
+			if err != nil {
+				return nil, err
+			}
+			return topo, nil
 		}
 	}
-
-	switch len(topologies) {
-	case 0:
-		return nil, common.NewBasicError("Bootstrapping failed, no topologies found in '" + hintDirectory + "'", nil)
-	case 1:
-	default:
-		log.Info("Found several topologies, using first one")
-	}
-
-	if targetTopologyPath != "" {
-		ioutil.WriteFile(targetTopologyPath, rawTopologies[chosenIndex], 0644)
-	}
-
-	return topologies[chosenIndex], nil
 }
 
-func fetchTopology(address string) (*topology.Topo, common.RawBytes) {
+func fetchTRC(topo *topology.Topo) error {
+	trustDB, err := cfg.TrustDB.New()
+	if err != nil {
+		log.Crit("Unable to initialize trustDB", "err", err)
+		return err
+	}
+	defer trustDB.Close()
+	provider := providerFunc(func() *topology.Topo { return topo })
+	trustConf := trust.Config{TopoProvider: provider}
+	trustStore := trust.NewStore(trustDB, topo.ISD_AS, trustConf, log.Root())
+	nc := infraenv.NetworkConfig{
+		IA:                    topo.ISD_AS,
+		Public:                cfg.SD.Public,
+		Bind:                  cfg.SD.Bind,
+		SVC:                   addr.SvcNone,
+		ReconnectToDispatcher: cfg.General.ReconnectToDispatcher,
+		QUIC: infraenv.QUIC{
+			Address:  cfg.QUIC.Address,
+			CertFile: cfg.QUIC.CertFile,
+			KeyFile:  cfg.QUIC.KeyFile,
+		},
+		SVCResolutionFraction: cfg.QUIC.ResolutionFraction,
+		TrustStore:            trustStore,
+		SVCRouter:             messenger.NewSVCRouter(provider),
+	}
+	_, err = nc.Messenger()
+	if err != nil {
+		log.Crit(infraenv.ErrAppUnableToInitMessenger, "err", err)
+		return err
+	}
+	err = trustStore.LoadAuthoritativeTRCWithNetwork("")
+	if err != nil {
+		log.Crit("Unable to load local TRC", "err", err)
+		return err
+	}
+
+	err = verifyTopology(topo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func fetchTopology(address string) *topology.Topo {
 	log.Debug("Trying to fetch from " + address)
 
-	ctx, cancelF := context.WithTimeout(context.Background(), 2 * time.Second)
+	ctx, cancelF := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelF()
 	params := discovery.FetchParams{Mode: discovery.Static, File: discovery.Endhost}
 
 	ip := addr.HostFromIPStr(address)
 
 	if ip == nil {
-		return nil, nil
+		return nil
 	}
 
-	topo, raw, err := discovery.FetchTopoRaw(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
+	topo, err := discovery.FetchTopo(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
 
 	if err != nil {
 		log.Debug("Nothing was found")
-		return nil, nil
+		return nil
 	}
 
 	log.Debug("candidate topology found")
-	return topo, raw
+	return topo
 }
 
-func readLinesFromAllFiles(hintDirectory string) []string {
-	var result []string
+func verifyTopology(topo *topology.Topo) error {
+	// TODO (veenj)
+	return nil
+}
 
-	if hintDirectory == "" {
-		return result
-	}
+type HintGenerator interface {
+	Generate(resultChannel chan string)
+}
 
-	files, err := ioutil.ReadDir(hintDirectory)
+var _ HintGenerator = (*DHCPHintGenerator)(nil)
 
-	log.Trace("Reading directory '" + hintDirectory + "'")
+type DHCPHintGenerator struct{}
 
-	if err != nil {
-		return result
-	}
+func (g *DHCPHintGenerator) Generate(channel chan string) {
+	// TODO (veenj)
 
-	for i := 0; i < len(files); i++ {
-		if files[i].IsDir() {
-			continue
-		}
-		log.Trace("Reading file '" + files[i].Name() + "'")
+}
 
-		path := hintDirectory + "/" + files[i].Name()
-		content, err := ioutil.ReadFile(path)
-		if err != nil {
-			log.Warn("Bootstrapping skips file ", path)
-		}
+var _ HintGenerator = (*DNSSNAPTRHintGenerator)(nil)
 
-		lines := bytes.Split(content, []byte{ byte('\n') })
-		for j := 0; j < len(lines); j++ {
-			if len(lines[j]) > 0 {
-				result = append(result, string(lines[j]))
-			}
-		}
-	}
-	return result
+type DNSSNAPTRHintGenerator struct{}
+
+func (g *DNSSNAPTRHintGenerator) Generate(channel chan string) {
+	// TODO (veenj)
+
+}
+
+var _ HintGenerator = (*StaticHintGenerator)(nil)
+
+type StaticHintGenerator struct{}
+
+func (g *StaticHintGenerator) Generate(channel chan string) {
+	channel <- "127.0.0.252"
+}
+
+var _ HintGenerator = (*RouterAdvertisementHintGenerator)(nil)
+
+type RouterAdvertisementHintGenerator struct{}
+
+func (g *RouterAdvertisementHintGenerator) Generate(channel chan string) {
+	// TODO (veenj)
+
+}
+
+var _ HintGenerator = (*DNSServiceDiscoveryHintGenerator)(nil)
+
+type DNSServiceDiscoveryHintGenerator struct{}
+
+func (g *DNSServiceDiscoveryHintGenerator) Generate(channel chan string) {
+	// TODO (veenj)
+
+}
+
+type providerFunc func() *topology.Topo
+
+func (f providerFunc) Get() *topology.Topo {
+	return f()
 }

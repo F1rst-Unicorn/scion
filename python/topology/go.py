@@ -211,7 +211,7 @@ class GoGenerator(object):
                 'ConfigDir': config_dir,
                 'ReconnectToDispatcher': True,
             },
-            'logging': self._log_entry(name),
+            'logging': self._log_entry(name, console='trace'),
             'trustDB': trust_db_conf_entry(self.args, name),
             'discovery': {
                 'static': {
@@ -222,7 +222,7 @@ class GoGenerator(object):
                     'Enable': True,
                 },
                 'bootstrap': {
-                    'HintsPath': os.path.join(config_dir, "hints"),
+                    'Enable': True,
                 }
             },
             'sd': {
@@ -328,14 +328,14 @@ class GoGenerator(object):
         }
         return entry
 
-    def _log_entry(self, name):
+    def _log_entry(self, name, file=None, console=None):
         entry = {
             'file': {
                 'Path': os.path.join(self.log_dir, "%s.log" % name),
-                'Level': self.log_level,
+                'Level': file if file is not None else self.log_level,
             },
             'console': {
-                'Level': 'crit',
+                'Level': console if console is not None else 'crit',
             },
         }
         return entry
