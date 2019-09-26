@@ -499,3 +499,15 @@ go_repository(
     commit = "27936f6d90f9c8e1145f11ed52ffffbfdb9e0af7",
     importpath = "github.com/pkg/errors",
 )
+
+go_repository(
+    name = "com_github_insomniacslk_dhcp",
+    importpath = "github.com/insomniacslk/dhcp",
+    commit = "f4eaaf1f283fe3dc826012a75e7ba0dc4ddc4c1e",
+)
+
+go_repository(
+    name = "com_github_u_root_u_root",
+    importpath = "github.com/u-root/u-root",
+    commit = "26a90287872f42e357dc889f6918855fc0fde4dc",
+)

@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/dhcpv4/client4"
 	"github.com/scionproto/scion/go/lib/addr"
 	"github.com/scionproto/scion/go/lib/discovery"
 	"github.com/scionproto/scion/go/lib/infra/infraenv"
@@ -23,6 +25,7 @@ import (
 	"github.com/scionproto/scion/go/lib/infra/modules/trust"
 	"github.com/scionproto/scion/go/lib/log"
 	"github.com/scionproto/scion/go/lib/topology"
+	"net"
 	"time"
 )
 
@@ -146,8 +149,55 @@ var _ HintGenerator = (*DHCPHintGenerator)(nil)
 type DHCPHintGenerator struct{}
 
 func (g *DHCPHintGenerator) Generate(channel chan string) {
-	// TODO (veenj)
+	interfaces, err := net.Interfaces()
 
+	if err != nil {
+		log.Crit("Could not list interfaces", "err", err)
+		return
+	}
+
+	for _, intf := range interfaces {
+		currentInterface := intf
+		go func() {
+			defer log.LogPanicAndExit()
+			probeInterface(currentInterface, channel)
+		}()
+	}
+}
+
+func probeInterface(currentInterface net.Interface, channel chan string) {
+	log.Debug("Probing", "interface", currentInterface.Name)
+	client := client4.NewClient()
+	localIPs, err := dhcpv4.IPv4AddrsForInterface(&currentInterface)
+	if err != nil || len(localIPs) == 0 {
+		log.Warn("could not get local IPs", "interface", currentInterface.Name, "err", err)
+		return
+	}
+	p, err := dhcpv4.NewInform(currentInterface.HardwareAddr, localIPs[0], dhcpv4.WithRequestedOptions(
+		dhcpv4.OptionDefaultWorldWideWebServer,
+		dhcpv4.OptionTFTPServerName))
+	if err != nil {
+		log.Crit("DHCP hinter failed to build network packet", "err", err)
+		return
+	}
+	p.SetBroadcast()
+	sender, err := client4.MakeBroadcastSocket(currentInterface.Name)
+	if err != nil {
+		log.Crit("DHCP hinter failed to open broadcast sender socket", "err", err)
+		return
+	}
+	receiver, err := client4.MakeListeningSocket(currentInterface.Name)
+	if err != nil {
+		log.Crit("DHCP hinter failed to open receiver socket", "err", err)
+		return
+	}
+	ack, err := client.SendReceive(sender, receiver, p, dhcpv4.MessageTypeAck)
+	if err != nil {
+		log.Warn("DHCP hinter failed to send inform request", "err", err)
+		return
+	}
+	channel <- dhcpv4.GetIP(dhcpv4.OptionDefaultWorldWideWebServer, ack.Options).String()
+	channel <- dhcpv4.GetString(dhcpv4.OptionTFTPServerName, ack.Options)
 }
 
 var _ HintGenerator = (*DNSSNAPTRHintGenerator)(nil)

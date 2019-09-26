@@ -16,7 +16,8 @@
       "/com_github_mattn_go_sqlite3": "",
       "/com_github_lucas_clemente_quic_go": "",
       "/com_github_cloudflare_sidh": "",
-      "/com_github_vishvananda_netlink": ""
+      "/com_github_vishvananda_netlink": "",
+      "/com_github_u_root_u_root": ""
     }
   },
   "printf": {
