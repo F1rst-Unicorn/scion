@@ -46,10 +46,10 @@ func tryBootstrapping() (*topology.Topo, error) {
 	var topo *topology.Topo
 
 	for i := 0; i < len(hintGenerators); i++ {
-		x := hintGenerators[i]
+		generator := hintGenerators[i]
 		go func() {
 			defer log.LogPanicAndExit()
-			x.Generate(channel)
+			generator.Generate(channel)
 		}()
 	}
 
@@ -121,6 +121,7 @@ func fetchTopology(address string) *topology.Topo {
 	ip := addr.HostFromIPStr(address)
 
 	if ip == nil {
+		log.Debug("Discovered invalid address", "ip", ip)
 		return nil
 	}
 
