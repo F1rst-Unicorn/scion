@@ -9,6 +9,12 @@
       "gazelle/language/go/resolve.go": ""
     }
   },
+  "composites": {
+    "exclude_files": {
+      "/com_github_miekg_dns": "",
+      "/com_github_grandcat_zeroconf": ""
+    }
+  },
   "nilness": {
     "exclude_files": {
       "gazelle/cmd/gazelle/diff.go": "",

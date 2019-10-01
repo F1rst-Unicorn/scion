@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"github.com/grandcat/zeroconf"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv4/client4"
 	"github.com/scionproto/scion/go/lib/addr"
@@ -26,6 +27,8 @@ import (
 	"github.com/scionproto/scion/go/lib/log"
 	"github.com/scionproto/scion/go/lib/topology"
 	"net"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -42,7 +45,7 @@ func tryBootstrapping() (*topology.Topo, error) {
 		&StaticHintGenerator{},
 		&DHCPHintGenerator{},
 		&RouterAdvertisementHintGenerator{},
-		&DNSServiceDiscoveryHintGenerator{}}
+		&MDNSServiceDiscoveryHintGenerator{}}
 	var topo *topology.Topo
 
 	for i := 0; i < len(hintGenerators); i++ {
@@ -153,7 +156,7 @@ func (g *DHCPHintGenerator) Generate(channel chan string) {
 	interfaces, err := net.Interfaces()
 
 	if err != nil {
-		log.Crit("Could not list interfaces", "err", err)
+		log.Crit("DHCP could not list interfaces", "err", err)
 		return
 	}
 
@@ -167,11 +170,11 @@ func (g *DHCPHintGenerator) Generate(channel chan string) {
 }
 
 func probeInterface(currentInterface net.Interface, channel chan string) {
-	log.Debug("Probing", "interface", currentInterface.Name)
+	log.Debug("DHCP Probing", "interface", currentInterface.Name)
 	client := client4.NewClient()
 	localIPs, err := dhcpv4.IPv4AddrsForInterface(&currentInterface)
 	if err != nil || len(localIPs) == 0 {
-		log.Warn("could not get local IPs", "interface", currentInterface.Name, "err", err)
+		log.Warn("DHCP could not get local IPs", "interface", currentInterface.Name, "err", err)
 		return
 	}
 	p, err := dhcpv4.NewInform(currentInterface.HardwareAddr, localIPs[0], dhcpv4.WithRequestedOptions(
@@ -227,13 +230,39 @@ func (g *RouterAdvertisementHintGenerator) Generate(channel chan string) {
 
 }
 
-var _ HintGenerator = (*DNSServiceDiscoveryHintGenerator)(nil)
+var _ HintGenerator = (*MDNSServiceDiscoveryHintGenerator)(nil)
 
-type DNSServiceDiscoveryHintGenerator struct{}
+type MDNSServiceDiscoveryHintGenerator struct{}
 
-func (g *DNSServiceDiscoveryHintGenerator) Generate(channel chan string) {
-	// TODO (veenj)
+func (g *MDNSServiceDiscoveryHintGenerator) Generate(channel chan string) {
+	resolver, err := zeroconf.NewResolver(nil)
+	if err!= nil{
+		log.Warn("mDNS could not construct dns resolver", "err", err)
+		return
+	}
 
+	entries := make(chan *zeroconf.ServiceEntry)
+	go func(results <-chan *zeroconf.ServiceEntry) {
+		defer log.LogPanicAndExit()
+		for entry := range results {
+			for _, address := range entry.AddrIPv4 {
+				channel <- address.String()
+			}
+			for _, address := range entry.AddrIPv6 {
+				channel <- address.String()
+			}
+		}
+		log.Debug("mDNS has no more entries.")
+	}(entries)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	err = resolver.Browse(ctx, "_sciondiscovery._tcp", "local.", entries)
+	if err != nil {
+		log.Warn("mDNS could not lookup", "err", err)
+		return
+	}
+	<-ctx.Done()
 }
 
 type providerFunc func() *topology.Topo

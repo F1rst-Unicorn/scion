@@ -511,3 +511,21 @@ go_repository(
     importpath = "github.com/u-root/u-root",
     commit = "26a90287872f42e357dc889f6918855fc0fde4dc",
 )
+
+go_repository(
+    name = "com_github_grandcat_zeroconf",
+    commit = "85eadb44205c14827ae7cbb129bc7eed4488dd25",
+    importpath = "github.com/grandcat/zeroconf",
+)
+
+go_repository(
+    name = "com_github_miekg_dns",
+    commit = "1208fbdde0ad3326de82ac4a8f53058d480ed228",
+    importpath = "github.com/miekg/dns",
+)
+
+go_repository(
+    name = "com_github_cenkalti_backoff",
+    commit = "4b4cebaf850ec58f1bb1fec5bdebdf8501c2bc3f",
+    importpath = "github.com/cenkalti/backoff",
+)
