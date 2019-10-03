@@ -19,6 +19,8 @@ import (
 	"github.com/grandcat/zeroconf"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv4/client4"
+	"github.com/insomniacslk/dhcp/rfc1035label"
+	"github.com/miekg/dns"
 	"github.com/scionproto/scion/go/lib/addr"
 	"github.com/scionproto/scion/go/lib/discovery"
 	"github.com/scionproto/scion/go/lib/infra/infraenv"
@@ -38,6 +40,7 @@ const (
 
 var (
 	channel = make(chan string)
+	dnsServersChannel = make(chan DNSInfo)
 )
 
 func tryBootstrapping() (*topology.Topo, error) {
@@ -45,7 +48,8 @@ func tryBootstrapping() (*topology.Topo, error) {
 		&StaticHintGenerator{},
 		&DHCPHintGenerator{},
 		&RouterAdvertisementHintGenerator{},
-		&MDNSServiceDiscoveryHintGenerator{}}
+		&DNSSDHintGenerator{},
+		&MDNSSDHintGenerator{}}
 	var topo *topology.Topo
 
 	for i := 0; i < len(hintGenerators); i++ {
@@ -115,8 +119,6 @@ func fetchTRC(topo *topology.Topo) error {
 }
 
 func fetchTopology(address string) *topology.Topo {
-	log.Debug("Trying to fetch from " + address)
-
 	ctx, cancelF := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelF()
 	params := discovery.FetchParams{Mode: discovery.Static, File: discovery.Endhost}
@@ -124,9 +126,10 @@ func fetchTopology(address string) *topology.Topo {
 	ip := addr.HostFromIPStr(address)
 
 	if ip == nil {
-		log.Debug("Discovered invalid address", "ip", ip)
+		log.Debug("Discovered invalid address", "address", address)
 		return nil
 	}
+	log.Debug("Trying to fetch from " + address)
 
 	topo, err := discovery.FetchTopo(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
 
@@ -179,38 +182,95 @@ func probeInterface(currentInterface net.Interface, channel chan string) {
 	}
 	p, err := dhcpv4.NewInform(currentInterface.HardwareAddr, localIPs[0], dhcpv4.WithRequestedOptions(
 		dhcpv4.OptionDefaultWorldWideWebServer,
-		dhcpv4.OptionTFTPServerName))
+		dhcpv4.OptionDomainNameServer,
+		dhcpv4.OptionDNSDomainSearchList))
 	if err != nil {
-		log.Crit("DHCP hinter failed to build network packet", "err", err)
+		log.Crit("DHCP hinter failed to build network packet", "interface", currentInterface.Name, "err", err)
 		return
 	}
 	p.SetBroadcast()
 	sender, err := client4.MakeBroadcastSocket(currentInterface.Name)
 	if err != nil {
-		log.Crit("DHCP hinter failed to open broadcast sender socket", "err", err)
+		log.Crit("DHCP hinter failed to open broadcast sender socket", "interface", currentInterface.Name, "err", err)
 		return
 	}
 	receiver, err := client4.MakeListeningSocket(currentInterface.Name)
 	if err != nil {
-		log.Crit("DHCP hinter failed to open receiver socket", "err", err)
+		log.Crit("DHCP hinter failed to open receiver socket", "interface", currentInterface.Name, "err", err)
 		return
 	}
 	ack, err := client.SendReceive(sender, receiver, p, dhcpv4.MessageTypeAck)
 	if err != nil {
-		log.Warn("DHCP hinter failed to send inform request", "err", err)
+		log.Warn("DHCP hinter failed to send inform request", "interface", currentInterface.Name, "err", err)
 		return
 	}
 	channel <- dhcpv4.GetIP(dhcpv4.OptionDefaultWorldWideWebServer, ack.Options).String()
-	channel <- dhcpv4.GetString(dhcpv4.OptionTFTPServerName, ack.Options)
+
+	resolvers := dhcpv4.GetIPs(dhcpv4.OptionDomainNameServer, ack.Options)
+	rawSearchDomains := ack.Options.Get(dhcpv4.OptionDNSDomainSearchList)
+	searchDomains, err := rfc1035label.FromBytes(rawSearchDomains)
+
+	dnsInfo := DNSInfo{}
+
+	for _, item := range resolvers {
+		dnsInfo.resolvers = append(dnsInfo.resolvers, item.String())
+	}
+	for _, item := range searchDomains.Labels {
+		dnsInfo.searchDomains = append(dnsInfo.searchDomains, item)
+	}
+
+	dnsServersChannel <- dnsInfo
 }
 
-var _ HintGenerator = (*DNSSNAPTRHintGenerator)(nil)
+var _ HintGenerator = (*DNSSDHintGenerator)(nil)
 
-type DNSSNAPTRHintGenerator struct{}
+// Domain Name System Service Discovery
+type DNSSDHintGenerator struct{}
 
-func (g *DNSSNAPTRHintGenerator) Generate(channel chan string) {
-	// TODO (veenj)
+func (g *DNSSDHintGenerator) Generate(channel chan string) {
+	for {
+		dnsServer := <- dnsServersChannel
+		dnsServer.searchDomains = append(dnsServer.searchDomains, getDomainName())
 
+		for _, resolver := range dnsServer.resolvers {
+			for _, domain:= range dnsServer.searchDomains {
+				doServiceDiscovery(resolver, domain)
+				doSNAPTRDiscovery(resolver, domain)
+			}
+		}
+	}
+}
+
+type DNSInfo struct {
+	resolvers     []string
+	searchDomains []string
+}
+
+// Straightforward Naming Authority Pointer
+func doSNAPTRDiscovery(dnsServer, domain string) {
+	// TODO
+}
+
+func doServiceDiscovery(resolver, domain string) {
+	queryString := "_sciondiscovery._tcp." + domain + "."
+	log.Debug("DNS-SD", "query", queryString, "resolver", resolver)
+
+	msg := new(dns.Msg)
+	msg.SetQuestion(queryString, dns.TypePTR)
+	msg.RecursionDesired = true
+	result, err := dns.Exchange(msg, resolver+":53")
+	if err != nil {
+		log.Warn("DNS-SD failed", "err", err)
+		return
+	}
+	sections := append(result.Answer, result.Ns...)
+	sections = append(sections, result.Extra...)
+	for _, answer := range sections {
+		log.Debug("DNS-SD Found record", "answer", answer)
+		switch rr := answer.(type) {
+		case *dns.A:
+		}
+	}
 }
 
 var _ HintGenerator = (*StaticHintGenerator)(nil)
@@ -230,11 +290,12 @@ func (g *RouterAdvertisementHintGenerator) Generate(channel chan string) {
 
 }
 
-var _ HintGenerator = (*MDNSServiceDiscoveryHintGenerator)(nil)
+var _ HintGenerator = (*MDNSSDHintGenerator)(nil)
 
-type MDNSServiceDiscoveryHintGenerator struct{}
+// Multicast Domain Name System Service Discovery
+type MDNSSDHintGenerator struct{}
 
-func (g *MDNSServiceDiscoveryHintGenerator) Generate(channel chan string) {
+func (g *MDNSSDHintGenerator) Generate(channel chan string) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err!= nil{
 		log.Warn("mDNS could not construct dns resolver", "err", err)
@@ -263,6 +324,22 @@ func (g *MDNSServiceDiscoveryHintGenerator) Generate(channel chan string) {
 		return
 	}
 	<-ctx.Done()
+}
+
+func getDomainName() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Warn("Bootstrapper could not get hostname", "err", err)
+		return ""
+	}
+	split := strings.SplitAfterN(hostname, ".", 2)
+	if len(split) < 2 {
+		log.Warn("Bootstrapper could not get domain name", "hostname", hostname, "split", split)
+		return ""
+	} else {
+		log.Debug("Bootstrapper", "domain", split[1])
+	}
+	return split[1]
 }
 
 type providerFunc func() *topology.Topo
