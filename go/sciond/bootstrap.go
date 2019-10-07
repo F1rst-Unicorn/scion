@@ -30,7 +30,9 @@ import (
 	"github.com/scionproto/scion/go/lib/topology"
 	"net"
 	"os"
+	"math/rand"
 	"strings"
+	"sort"
 	"time"
 )
 
@@ -58,6 +60,16 @@ func tryBootstrapping() (*topology.Topo, error) {
 			defer log.LogPanicAndExit()
 			generator.Generate(channel)
 		}()
+	}
+
+
+	localConfig, err := dns.ClientConfigFromFile("/etc/resolv.conf")
+	if err == nil {
+		dnsInfo := DNSInfo {
+			resolvers: localConfig.Servers,
+			searchDomains: localConfig.Search,
+		}
+		dnsServersChannel <- dnsInfo
 	}
 
 	for {
@@ -229,46 +241,73 @@ type DNSSDHintGenerator struct{}
 
 func (g *DNSSDHintGenerator) Generate(channel chan string) {
 	for {
+
 		dnsServer := <- dnsServersChannel
 		dnsServer.searchDomains = append(dnsServer.searchDomains, getDomainName())
 
 		for _, resolver := range dnsServer.resolvers {
 			for _, domain:= range dnsServer.searchDomains {
-				doServiceDiscovery(resolver, domain)
-				doSNAPTRDiscovery(resolver, domain)
+				doServiceDiscovery(channel, resolver, domain)
+				doSNAPTRDiscovery(channel, resolver, domain)
 			}
 		}
 	}
 }
 
 type DNSInfo struct {
-	resolvers     []string
+	resolvers	 []string
 	searchDomains []string
 }
 
 // Straightforward Naming Authority Pointer
-func doSNAPTRDiscovery(dnsServer, domain string) {
-	// TODO
+func doSNAPTRDiscovery(channel chan string, resolver, domain string) {
+    // TODO
 }
 
-func doServiceDiscovery(resolver, domain string) {
-	queryString := "_sciondiscovery._tcp." + domain + "."
-	log.Debug("DNS-SD", "query", queryString, "resolver", resolver)
+func doServiceDiscovery(channel chan string, resolver, domain string) {
+	query := "_sciondiscovery._tcp." + domain + "."
+	log.Debug("DNS-SD", "query", query, "resolver", resolver)
+	resolveDNS(resolver, query, dns.TypePTR, channel)
+}
 
+func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 	msg := new(dns.Msg)
-	msg.SetQuestion(queryString, dns.TypePTR)
+	msg.SetQuestion(query, dnsRR)
 	msg.RecursionDesired = true
 	result, err := dns.Exchange(msg, resolver+":53")
 	if err != nil {
 		log.Warn("DNS-SD failed", "err", err)
 		return
 	}
-	sections := append(result.Answer, result.Ns...)
-	sections = append(sections, result.Extra...)
-	for _, answer := range sections {
-		log.Debug("DNS-SD Found record", "answer", answer)
-		switch rr := answer.(type) {
+
+	serviceRecords := []dns.SRV{}
+	for _, answer := range result.Answer {
+		log.Debug("DNS", "answer", answer)
+		switch answer.(type) {
+		case *dns.PTR:
+			result := *(answer.(*dns.PTR))
+			resolveDNS(resolver, result.Ptr, dns.TypeSRV, channel)
+		case *dns.SRV:
+			result := *(answer.(*dns.SRV))
+			if result.Port != discoveryPort {
+				log.Warn("DNS announced invalid discovery port")
+			}
+			serviceRecords = append(serviceRecords, result)
 		case *dns.A:
+			result := *(answer.(*dns.A))
+			channel <- result.A.String()
+		case *dns.AAAA:
+			result := *(answer.(*dns.AAAA))
+			channel <- result.AAAA.String()
+		}
+	}
+
+	if len(serviceRecords) > 0 {
+		sort.Sort(byPriority(serviceRecords))
+
+		for _, answer := range serviceRecords {
+			resolveDNS(resolver, answer.Target, dns.TypeAAAA, channel)
+			resolveDNS(resolver, answer.Target, dns.TypeA, channel)
 		}
 	}
 }
@@ -340,6 +379,30 @@ func getDomainName() string {
 		log.Debug("Bootstrapper", "domain", split[1])
 	}
 	return split[1]
+}
+
+type byPriority []dns.SRV;
+
+func (s byPriority) Len() int {
+	return len(s)
+}
+
+func (s byPriority) Less(i, j int) bool {
+	if s[i].Priority < s[j].Priority {
+		return true
+	} else if s[j].Priority < s[i].Priority {
+		return false
+	} else {
+        if s[i].Weight == 0 && s[j].Weight == 0 {
+            return rand.Intn(2) == 0
+        }
+		max := int(s[i].Weight) + int(s[j].Weight)
+		return rand.Intn(max) < int(s[i].Weight)
+	}
+}
+
+func (s byPriority) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
 }
 
 type providerFunc func() *topology.Topo
