@@ -86,10 +86,10 @@ func fetchTRC(topo *topology.Topo) error {
 	trustConf := trust.Config{TopoProvider: provider}
 	trustStore := trust.NewStore(trustDB, topo.ISD_AS, trustConf, log.Root())
 	nc := infraenv.NetworkConfig{
-		IA:                    topo.ISD_AS,
-		Public:                cfg.SD.Public,
-		Bind:                  cfg.SD.Bind,
-		SVC:                   addr.SvcNone,
+		IA:					topo.ISD_AS,
+		Public:				cfg.SD.Public,
+		Bind:				  cfg.SD.Bind,
+		SVC:				   addr.SvcNone,
 		ReconnectToDispatcher: cfg.General.ReconnectToDispatcher,
 		QUIC: infraenv.QUIC{
 			Address:  cfg.QUIC.Address,
@@ -97,8 +97,8 @@ func fetchTRC(topo *topology.Topo) error {
 			KeyFile:  cfg.QUIC.KeyFile,
 		},
 		SVCResolutionFraction: cfg.QUIC.ResolutionFraction,
-		TrustStore:            trustStore,
-		SVCRouter:             messenger.NewSVCRouter(provider),
+		TrustStore:			trustStore,
+		SVCRouter:			 messenger.NewSVCRouter(provider),
 	}
 	_, err = nc.Messenger()
 	if err != nil {
