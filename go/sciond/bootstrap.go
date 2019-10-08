@@ -28,11 +28,11 @@ import (
 	"github.com/scionproto/scion/go/lib/infra/modules/trust"
 	"github.com/scionproto/scion/go/lib/log"
 	"github.com/scionproto/scion/go/lib/topology"
+	"math/rand"
 	"net"
 	"os"
-	"math/rand"
-	"strings"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -43,7 +43,7 @@ const (
 )
 
 var (
-	channel = make(chan string)
+	channel           = make(chan string)
 	dnsServersChannel = make(chan DNSInfo)
 )
 
@@ -64,11 +64,10 @@ func tryBootstrapping() (*topology.Topo, error) {
 		}()
 	}
 
-
 	localConfig, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err == nil {
-		dnsInfo := DNSInfo {
-			resolvers: localConfig.Servers,
+		dnsInfo := DNSInfo{
+			resolvers:     localConfig.Servers,
 			searchDomains: localConfig.Search,
 		}
 		dnsServersChannel <- dnsInfo
@@ -100,10 +99,10 @@ func fetchTRC(topo *topology.Topo) error {
 	trustConf := trust.Config{TopoProvider: provider}
 	trustStore := trust.NewStore(trustDB, topo.ISD_AS, trustConf, log.Root())
 	nc := infraenv.NetworkConfig{
-		IA:					topo.ISD_AS,
-		Public:				cfg.SD.Public,
-		Bind:				  cfg.SD.Bind,
-		SVC:				   addr.SvcNone,
+		IA:                    topo.ISD_AS,
+		Public:                cfg.SD.Public,
+		Bind:                  cfg.SD.Bind,
+		SVC:                   addr.SvcNone,
 		ReconnectToDispatcher: cfg.General.ReconnectToDispatcher,
 		QUIC: infraenv.QUIC{
 			Address:  cfg.QUIC.Address,
@@ -111,8 +110,8 @@ func fetchTRC(topo *topology.Topo) error {
 			KeyFile:  cfg.QUIC.KeyFile,
 		},
 		SVCResolutionFraction: cfg.QUIC.ResolutionFraction,
-		TrustStore:			trustStore,
-		SVCRouter:			 messenger.NewSVCRouter(provider),
+		TrustStore:            trustStore,
+		SVCRouter:             messenger.NewSVCRouter(provider),
 	}
 	_, err = nc.Messenger()
 	if err != nil {
@@ -244,11 +243,11 @@ type DNSSDHintGenerator struct{}
 func (g *DNSSDHintGenerator) Generate(channel chan string) {
 	for {
 
-		dnsServer := <- dnsServersChannel
+		dnsServer := <-dnsServersChannel
 		dnsServer.searchDomains = append(dnsServer.searchDomains, getDomainName())
 
 		for _, resolver := range dnsServer.resolvers {
-			for _, domain:= range dnsServer.searchDomains {
+			for _, domain := range dnsServer.searchDomains {
 				doServiceDiscovery(channel, resolver, domain)
 				doSNAPTRDiscovery(channel, resolver, domain)
 			}
@@ -362,7 +361,7 @@ type MDNSSDHintGenerator struct{}
 
 func (g *MDNSSDHintGenerator) Generate(channel chan string) {
 	resolver, err := zeroconf.NewResolver(nil)
-	if err!= nil{
+	if err != nil {
 		log.Warn("mDNS could not construct dns resolver", "err", err)
 		return
 	}
@@ -407,7 +406,7 @@ func getDomainName() string {
 	return split[1]
 }
 
-type byPriority []dns.SRV;
+type byPriority []dns.SRV
 
 func (s byPriority) Len() int {
 	return len(s)
@@ -419,9 +418,9 @@ func (s byPriority) Less(i, j int) bool {
 	} else if s[j].Priority < s[i].Priority {
 		return false
 	} else {
-        if s[i].Weight == 0 && s[j].Weight == 0 {
-            return rand.Intn(2) == 0
-        }
+		if s[i].Weight == 0 && s[j].Weight == 0 {
+			return rand.Intn(2) == 0
+		}
 		max := int(s[i].Weight) + int(s[j].Weight)
 		return rand.Intn(max) < int(s[i].Weight)
 	}
