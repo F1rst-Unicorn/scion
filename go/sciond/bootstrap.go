@@ -37,7 +37,9 @@ import (
 )
 
 const (
-	discoveryPort uint16 = 8041
+	discoveryPort           uint16 = 8041
+	discoveryServiceDNSName string = "_sciondiscovery._tcp"
+	discoveryDDDSDNSName    string = "x-sciondiscovery:tcp"
 )
 
 var (
@@ -255,18 +257,20 @@ func (g *DNSSDHintGenerator) Generate(channel chan string) {
 }
 
 type DNSInfo struct {
-	resolvers	 []string
+	resolvers     []string
 	searchDomains []string
 }
 
 // Straightforward Naming Authority Pointer
 func doSNAPTRDiscovery(channel chan string, resolver, domain string) {
-    // TODO
+	query := domain + "."
+	log.Debug("DNS-S-NAPTR", "query", query, "rr", dns.TypeNAPTR, "resolver", resolver)
+	resolveDNS(resolver, query, dns.TypeNAPTR, channel)
 }
 
 func doServiceDiscovery(channel chan string, resolver, domain string) {
-	query := "_sciondiscovery._tcp." + domain + "."
-	log.Debug("DNS-SD", "query", query, "resolver", resolver)
+	query := discoveryServiceDNSName + "." + domain + "."
+	log.Debug("DNS-SD", "query", query, "rr", dns.TypePTR, "resolver", resolver)
 	resolveDNS(resolver, query, dns.TypePTR, channel)
 }
 
@@ -281,12 +285,18 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 	}
 
 	serviceRecords := []dns.SRV{}
+	naptrRecords := []dns.NAPTR{}
 	for _, answer := range result.Answer {
 		log.Debug("DNS", "answer", answer)
 		switch answer.(type) {
 		case *dns.PTR:
 			result := *(answer.(*dns.PTR))
 			resolveDNS(resolver, result.Ptr, dns.TypeSRV, channel)
+		case *dns.NAPTR:
+			result := *(answer.(*dns.NAPTR))
+			if result.Service == discoveryDDDSDNSName {
+				naptrRecords = append(naptrRecords, result)
+			}
 		case *dns.SRV:
 			result := *(answer.(*dns.SRV))
 			if result.Port != discoveryPort {
@@ -308,6 +318,22 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 		for _, answer := range serviceRecords {
 			resolveDNS(resolver, answer.Target, dns.TypeAAAA, channel)
 			resolveDNS(resolver, answer.Target, dns.TypeA, channel)
+		}
+	}
+
+	if len(naptrRecords) > 0 {
+		sort.Sort(byOrder(naptrRecords))
+
+		for _, answer := range naptrRecords {
+			switch answer.Flags {
+			case "":
+				resolveDNS(resolver, answer.Replacement, dns.TypeNAPTR, channel)
+			case "A":
+				resolveDNS(resolver, answer.Replacement, dns.TypeAAAA, channel)
+				resolveDNS(resolver, answer.Replacement, dns.TypeA, channel)
+			case "S":
+				resolveDNS(resolver, answer.Replacement, dns.TypeSRV, channel)
+			}
 		}
 	}
 }
@@ -402,6 +428,26 @@ func (s byPriority) Less(i, j int) bool {
 }
 
 func (s byPriority) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+type byOrder []dns.NAPTR
+
+func (s byOrder) Len() int {
+	return len(s)
+}
+
+func (s byOrder) Less(i, j int) bool {
+	if s[i].Order < s[j].Order {
+		return true
+	} else if s[j].Order < s[i].Order {
+		return false
+	} else {
+		return s[i].Preference < s[j].Preference
+	}
+}
+
+func (s byOrder) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
