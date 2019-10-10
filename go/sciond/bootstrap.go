@@ -49,7 +49,6 @@ var (
 
 func tryBootstrapping() (*topology.Topo, error) {
 	hintGenerators := []HintGenerator{
-		&StaticHintGenerator{},
 		&DHCPHintGenerator{},
 		&RouterAdvertisementHintGenerator{},
 		&DNSSDHintGenerator{},
@@ -124,8 +123,7 @@ func fetchTRC(topo *topology.Topo) error {
 		return err
 	}
 
-	err = verifyTopology(topo)
-	if err != nil {
+	if isTopologyValid(topo) {
 		return err
 	}
 	return nil
@@ -155,9 +153,9 @@ func fetchTopology(address string) *topology.Topo {
 	return topo
 }
 
-func verifyTopology(topo *topology.Topo) error {
+func isTopologyValid(topo *topology.Topo) bool {
 	// TODO (veenj)
-	return nil
+	return true
 }
 
 type HintGenerator interface {
@@ -335,14 +333,6 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 			}
 		}
 	}
-}
-
-var _ HintGenerator = (*StaticHintGenerator)(nil)
-
-type StaticHintGenerator struct{}
-
-func (g *StaticHintGenerator) Generate(channel chan string) {
-	channel <- "127.0.0.252"
 }
 
 var _ HintGenerator = (*RouterAdvertisementHintGenerator)(nil)
