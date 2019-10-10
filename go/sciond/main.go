@@ -220,11 +220,15 @@ func setup() error {
 		return common.NewBasicError("Unable to validate config", err)
 	}
 	itopo.Init("", proto.ServiceType_unset, itopo.Callbacks{})
-	topo, err := topology.LoadFromFile(cfg.General.Topology)
-	if err != nil {
-		if cfg.Discovery.Bootstrap.Enable {
-			topo, err = tryBootstrapping()
+	var topo *topology.Topo
+	var err error
+	if cfg.Discovery.Bootstrap.Enable {
+		topo, err = tryBootstrapping()
+		if err != nil {
+			return common.NewBasicError("Unable to load topology", err)
 		}
+	} else {
+		topo, err = topology.LoadFromFile(cfg.General.Topology)
 		if err != nil {
 			return common.NewBasicError("Unable to load topology", err)
 		}
