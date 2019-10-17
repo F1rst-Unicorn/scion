@@ -50,7 +50,6 @@ var (
 func tryBootstrapping() (*topology.Topo, error) {
 	hintGenerators := []HintGenerator{
 		&DHCPHintGenerator{},
-		&RouterAdvertisementHintGenerator{},
 		&DNSSDHintGenerator{},
 		&MDNSSDHintGenerator{}}
 	var topo *topology.Topo
@@ -221,6 +220,10 @@ func probeInterface(currentInterface net.Interface, channel chan string) {
 	rawSearchDomains := ack.Options.Get(dhcpv4.OptionDNSDomainSearchList)
 	searchDomains, err := rfc1035label.FromBytes(rawSearchDomains)
 
+	if err != nil {
+		log.Warn("DHCP failed to to read search domains", "err", err)
+	}
+
 	dnsInfo := DNSInfo{}
 
 	for _, item := range resolvers {
@@ -281,8 +284,8 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 		return
 	}
 
-	serviceRecords := []dns.SRV{}
-	naptrRecords := []dns.NAPTR{}
+	var serviceRecords []dns.SRV
+	var naptrRecords []dns.NAPTR
 	for _, answer := range result.Answer {
 		log.Debug("DNS", "answer", answer)
 		switch answer.(type) {
@@ -333,15 +336,6 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 			}
 		}
 	}
-}
-
-var _ HintGenerator = (*RouterAdvertisementHintGenerator)(nil)
-
-type RouterAdvertisementHintGenerator struct{}
-
-func (g *RouterAdvertisementHintGenerator) Generate(channel chan string) {
-	// TODO (veenj)
-
 }
 
 var _ HintGenerator = (*MDNSSDHintGenerator)(nil)
