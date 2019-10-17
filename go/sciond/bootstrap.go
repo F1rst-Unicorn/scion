@@ -81,12 +81,15 @@ func tryBootstrapping() (*topology.Topo, error) {
 			if err != nil {
 				return nil, err
 			}
+			patchConfigForTopology(topo.ISD_AS)
 			return topo, nil
 		}
 	}
 }
 
 func fetchTRC(topo *topology.Topo) error {
+	patchConfigForTopology(topo.ISD_AS)
+
 	trustDB, err := cfg.TrustDB.New()
 	if err != nil {
 		log.Crit("Unable to initialize trustDB", "err", err)
@@ -155,6 +158,16 @@ func fetchTopology(address string) *topology.Topo {
 func isTopologyValid(topo *topology.Topo) bool {
 	// TODO (veenj)
 	return true
+}
+
+func patchConfigForTopology(ia addr.IA) {
+	log.Info("Placing myself to IA", "IA", ia)
+	if cfg.SD.Public != nil {
+		cfg.SD.Public.IA = ia
+	}
+	if cfg.SD.Bind != nil {
+		cfg.SD.Bind.IA = ia
+	}
 }
 
 type HintGenerator interface {
