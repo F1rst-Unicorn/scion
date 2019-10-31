@@ -16,23 +16,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"github.com/grandcat/zeroconf"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv4/client4"
 	"github.com/insomniacslk/dhcp/rfc1035label"
 	"github.com/miekg/dns"
 	"github.com/scionproto/scion/go/lib/addr"
+	"github.com/scionproto/scion/go/lib/common"
 	"github.com/scionproto/scion/go/lib/discovery"
 	"github.com/scionproto/scion/go/lib/infra/infraenv"
 	"github.com/scionproto/scion/go/lib/infra/messenger"
 	"github.com/scionproto/scion/go/lib/infra/modules/trust"
 	"github.com/scionproto/scion/go/lib/log"
+	"github.com/scionproto/scion/go/lib/snet"
 	"github.com/scionproto/scion/go/lib/topology"
+	"github.com/scionproto/scion/go/lib/truststorage"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -40,6 +46,53 @@ const (
 	discoveryPort           uint16 = 8041
 	discoveryServiceDNSName string = "_sciondiscovery._tcp"
 	discoveryDDDSDNSName    string = "x-sciondiscovery:tcp"
+
+	sciondConfigTemplate string = `
+[tracing]
+agent = "127.0.0.1:1409"
+enabled = true
+debug = true
+
+[metrics]
+Prometheus = "[127.0.0.1]:9105"
+
+[quic]
+KeyFile = "gen-certs/tls.key"
+CertFile = "gen-certs/tls.pem"
+Address = "[{{ .IPAddress }}]:0"
+ResolutionFraction = 0.4
+
+[general]
+ReconnectToDispatcher = true
+ConfigDir = "gen/ISD{{ .ISD_AS.I }}/AS{{ .ISD_AS.A }}/endhost"
+ID = "sd{{ .ISD_AS.FileFmt false }}"
+
+[trustDB]
+Connection = "gen-cache/sd{{ .ISD_AS.FileFmt false }}.trust.db"
+Backend = "sqlite"
+
+[sd]
+Public = "{{ .ISD_AS }},[{{ .IPAddress }}]:0"
+Reliable = "/run/shm/sciond/sd{{ .ISD_AS.FileFmt false }}.sock"
+Unix = "/run/shm/sciond/sd{{ .ISD_AS.FileFmt false }}.unix"
+
+[sd.pathDB]
+Connection = "gen-cache/sd{{ .ISD_AS.FileFmt false }}.path.db"
+
+[logging.console]
+Level = "crit"
+
+[discovery.static]
+Enable = {{ .HasDiscovery }}
+
+[discovery.dynamic]
+Enable = {{ .HasDiscovery }}
+
+[logging.file]
+Path = "logs/sd{{ .ISD_AS.FileFmt false }}.log"
+Level = "debug"
+
+`
 )
 
 var (
@@ -47,12 +100,19 @@ var (
 	dnsServersChannel = make(chan DNSInfo)
 )
 
+type templateContext struct {
+	HasDiscovery bool
+
+	ISD_AS addr.IA
+
+	IPAddress net.IP
+}
+
 func tryBootstrapping() (*topology.Topo, error) {
 	hintGenerators := []HintGenerator{
 		&DHCPHintGenerator{},
 		&DNSSDHintGenerator{},
 		&MDNSSDHintGenerator{}}
-	var topo *topology.Topo
 
 	for i := 0; i < len(hintGenerators); i++ {
 		generator := hintGenerators[i]
@@ -62,34 +122,90 @@ func tryBootstrapping() (*topology.Topo, error) {
 		}()
 	}
 
-	localConfig, err := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if err == nil {
-		dnsInfo := DNSInfo{
-			resolvers:     localConfig.Servers,
-			searchDomains: localConfig.Search,
-		}
-		dnsServersChannel <- dnsInfo
-	}
-
 	for {
 		log.Debug("Bootstrapper is waiting for hints")
 		address := <-channel
-		topo = fetchTopology(address)
+		topo, raw := fetchTopology(address)
 
 		if topo != nil {
-			err := fetchTRC(topo)
+			err := ioutil.WriteFile(cfg.Topology, raw, 0644)
+			if err != nil {
+				log.Error("Bootstrapper could not store topology", "err", err)
+				return nil, err
+			}
+
+			i, err := generateSciondConfig(topo)
+			if err != nil {
+				return i, err
+			}
+
+			err = fetchTRC(topo)
 			if err != nil {
 				return nil, err
 			}
-			patchConfigForTopology(topo.ISD_AS)
+
 			return topo, nil
 		}
 	}
 }
 
-func fetchTRC(topo *topology.Topo) error {
-	patchConfigForTopology(topo.ISD_AS)
+func generateSciondConfig(topo *topology.Topo) (*topology.Topo, error) {
+	t := template.Must(template.New("config").Parse(sciondConfigTemplate))
+	sciondFile, err := os.OpenFile(cfg.SciondConfig, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Error("Could not open sciond config file", "err", err)
+		return nil, err
+	}
+	address := getIPAddress()
+	if address == nil {
+		return nil, errors.New("")
+	}
+	ctx := templateContext{
+		HasDiscovery: len(topo.DSNames) > 0,
 
+		ISD_AS: topo.ISD_AS,
+
+		IPAddress: address,
+	}
+	err = t.Execute(sciondFile, ctx)
+	if err != nil {
+		log.Error("Could template sciond config file", "err", err)
+		return nil, err
+	}
+	return nil, nil
+}
+
+func getIPAddress() net.IP {
+	intf := getInterface()
+	if intf == nil {
+		return nil
+	}
+	addresses, err := intf.Addrs()
+	if err != nil {
+		log.Error("Bootstrapper could not get IP address", "err", err)
+		return nil
+	}
+	var address net.IP
+	found := false
+	for _, a := range addresses {
+		switch v := a.(type) {
+		case *net.IPNet:
+			address = v.IP
+			found = true
+		case *net.IPAddr:
+			address = v.IP
+			found = true
+		}
+		if found {
+			break
+		}
+	}
+	return address
+}
+
+func fetchTRC(topo *topology.Topo) error {
+
+	cfg.TrustDB[truststorage.ConnectionKey] = "gen-cache/sd" + topo.ISD_AS.FileFmt(false) + ".trust.db"
 	trustDB, err := cfg.TrustDB.New()
 	if err != nil {
 		log.Crit("Unable to initialize trustDB", "err", err)
@@ -99,18 +215,19 @@ func fetchTRC(topo *topology.Topo) error {
 	provider := providerFunc(func() *topology.Topo { return topo })
 	trustConf := trust.Config{TopoProvider: provider}
 	trustStore := trust.NewStore(trustDB, topo.ISD_AS, trustConf, log.Root())
+	ip := getIPAddress()
 	nc := infraenv.NetworkConfig{
 		IA:                    topo.ISD_AS,
-		Public:                cfg.SD.Public,
-		Bind:                  cfg.SD.Bind,
+		Public:                &snet.Addr{IA: topo.ISD_AS, Host: &addr.AppAddr{L3: addr.HostFromIP(ip), L4: addr.NewL4UDPInfo(uint16(0))}},
+		Bind:                  nil,
 		SVC:                   addr.SvcNone,
-		ReconnectToDispatcher: cfg.General.ReconnectToDispatcher,
+		ReconnectToDispatcher: true,
 		QUIC: infraenv.QUIC{
-			Address:  cfg.QUIC.Address,
-			CertFile: cfg.QUIC.CertFile,
-			KeyFile:  cfg.QUIC.KeyFile,
+			Address:  "",
+			CertFile: "",
+			KeyFile:  "",
 		},
-		SVCResolutionFraction: cfg.QUIC.ResolutionFraction,
+		SVCResolutionFraction: 0,
 		TrustStore:            trustStore,
 		SVCRouter:             messenger.NewSVCRouter(provider),
 	}
@@ -131,7 +248,7 @@ func fetchTRC(topo *topology.Topo) error {
 	return nil
 }
 
-func fetchTopology(address string) *topology.Topo {
+func fetchTopology(address string) (*topology.Topo, common.RawBytes) {
 	ctx, cancelF := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelF()
 	params := discovery.FetchParams{Mode: discovery.Static, File: discovery.Endhost}
@@ -140,34 +257,24 @@ func fetchTopology(address string) *topology.Topo {
 
 	if ip == nil {
 		log.Debug("Discovered invalid address", "address", address)
-		return nil
+		return nil, nil
 	}
 	log.Debug("Trying to fetch from " + address)
 
-	topo, err := discovery.FetchTopo(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
+	topo, raw, err := discovery.FetchTopoRaw(ctx, params, &addr.AppAddr{L3: ip, L4: addr.NewL4TCPInfo(discoveryPort)}, nil)
 
 	if err != nil {
 		log.Debug("Nothing was found")
-		return nil
+		return nil, nil
 	}
 
 	log.Debug("candidate topology found")
-	return topo
+	return topo, raw
 }
 
 func isTopologyValid(topo *topology.Topo) bool {
 	// TODO (veenj)
 	return true
-}
-
-func patchConfigForTopology(ia addr.IA) {
-	log.Info("Placing myself to IA", "IA", ia)
-	if cfg.SD.Public != nil {
-		cfg.SD.Public.IA = ia
-	}
-	if cfg.SD.Bind != nil {
-		cfg.SD.Bind.IA = ia
-	}
 }
 
 type HintGenerator interface {
@@ -179,26 +286,21 @@ var _ HintGenerator = (*DHCPHintGenerator)(nil)
 type DHCPHintGenerator struct{}
 
 func (g *DHCPHintGenerator) Generate(channel chan string) {
-	interfaces, err := net.Interfaces()
-
-	if err != nil {
-		log.Crit("DHCP could not list interfaces", "err", err)
+	intf := getInterface()
+	if intf == nil {
 		return
 	}
 
-	for _, intf := range interfaces {
-		currentInterface := intf
-		go func() {
-			defer log.LogPanicAndExit()
-			probeInterface(currentInterface, channel)
-		}()
-	}
+	go func() {
+		defer log.LogPanicAndExit()
+		probeInterface(intf, channel)
+	}()
 }
 
-func probeInterface(currentInterface net.Interface, channel chan string) {
+func probeInterface(currentInterface *net.Interface, channel chan string) {
 	log.Debug("DHCP Probing", "interface", currentInterface.Name)
 	client := client4.NewClient()
-	localIPs, err := dhcpv4.IPv4AddrsForInterface(&currentInterface)
+	localIPs, err := dhcpv4.IPv4AddrsForInterface(currentInterface)
 	if err != nil || len(localIPs) == 0 {
 		log.Warn("DHCP could not get local IPs", "interface", currentInterface.Name, "err", err)
 		return
@@ -313,7 +415,7 @@ func resolveDNS(resolver, query string, dnsRR uint16, channel chan string) {
 		case *dns.SRV:
 			result := *(answer.(*dns.SRV))
 			if result.Port != discoveryPort {
-				log.Warn("DNS announced invalid discovery port")
+				log.Warn("DNS announced invalid discovery port", "expected", discoveryPort, "actual", result.Port)
 			}
 			serviceRecords = append(serviceRecords, result)
 		case *dns.A:
@@ -357,7 +459,12 @@ var _ HintGenerator = (*MDNSSDHintGenerator)(nil)
 type MDNSSDHintGenerator struct{}
 
 func (g *MDNSSDHintGenerator) Generate(channel chan string) {
-	resolver, err := zeroconf.NewResolver(nil)
+	intf := getInterface()
+	if intf == nil {
+		return
+	}
+
+	resolver, err := zeroconf.NewResolver(zeroconf.SelectIfaces([]net.Interface{*intf}))
 	if err != nil {
 		log.Warn("mDNS could not construct dns resolver", "err", err)
 		return
@@ -385,6 +492,15 @@ func (g *MDNSSDHintGenerator) Generate(channel chan string) {
 		return
 	}
 	<-ctx.Done()
+}
+
+func getInterface() *net.Interface {
+	intf, err := net.InterfaceByName(cfg.Interface)
+	if err != nil {
+		log.Crit("Bootstrapper could not get interface", "err", err)
+		return nil
+	}
+	return intf
 }
 
 func getDomainName() string {

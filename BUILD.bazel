@@ -12,6 +12,7 @@ pkg_tar(
     package_dir = "",
     srcs = [
         "//go/beacon_srv:beacon_srv",
+        "//go/bootstrapper:bootstrapper",
         "//go/border:border",
         "//go/cert_srv:cert_srv",
         "//go/godispatcher:godispatcher",
