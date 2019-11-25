@@ -108,6 +108,8 @@ type Topo struct {
 	RSNames  ServiceNames
 	DS       IDAddrMap
 	DSNames  ServiceNames
+	TS       IDAddrMap
+	TSNames  ServiceNames
 	SIG      IDAddrMap
 	SIGNames ServiceNames
 
@@ -125,6 +127,7 @@ func NewTopo() *Topo {
 		RS:        make(IDAddrMap),
 		SIG:       make(IDAddrMap),
 		DS:        make(IDAddrMap),
+		TS:        make(IDAddrMap),
 		ZK:        make(map[int]*addr.AppAddr),
 		IFInfoMap: make(IfInfoMap),
 	}
@@ -277,6 +280,10 @@ func (t *Topo) populateServices(raw *RawTopo) error {
 	if err != nil {
 		return err
 	}
+	t.TSNames, err = svcMapFromRaw(raw.TimeService, common.TS, t.TS, t.Overlay)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -345,6 +352,8 @@ func (t *Topo) GetSvcInfo(svc proto.ServiceType) (*SVCInfo, error) {
 		return &SVCInfo{overlay: t.Overlay, names: t.SIGNames, idTopoAddrMap: t.SIG}, nil
 	case proto.ServiceType_ds:
 		return &SVCInfo{overlay: t.Overlay, names: t.DSNames, idTopoAddrMap: t.DS}, nil
+	case proto.ServiceType_ts:
+		return &SVCInfo{overlay: t.Overlay, names: t.TSNames, idTopoAddrMap: t.TS}, nil
 	default:
 		return nil, common.NewBasicError("Unsupported service type", nil, "type", svc)
 	}

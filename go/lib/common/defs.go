@@ -38,6 +38,7 @@ const (
 	RS  = "RS"
 	SIG = "SIG"
 	DS  = "DS"
+	TS  = "TS"
 )
 
 // Interface ID

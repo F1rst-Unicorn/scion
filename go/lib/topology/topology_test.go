@@ -199,6 +199,7 @@ func Test_Service_Count(t *testing.T) {
 		SoMsg("Checking RS", len(c.RS), ShouldEqual, 2)
 		SoMsg("Checking SIG", len(c.SIG), ShouldEqual, 2)
 		SoMsg("Checking DS", len(c.DS), ShouldEqual, 2)
+		SoMsg("Checking TS", len(c.TS), ShouldEqual, 2)
 	})
 
 }

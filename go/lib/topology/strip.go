@@ -20,6 +20,7 @@ func StripBind(rt *RawTopo) {
 	removeSrvBind(rt.PathService)
 	removeSrvBind(rt.RainsService)
 	removeSrvBind(rt.DiscoveryService)
+	removeSrvBind(rt.TimeService)
 
 	// Border Routers have Bind sections plus other link-specific information that we want to trim
 	removeBRBind(rt.BorderRouters)

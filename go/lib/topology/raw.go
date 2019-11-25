@@ -55,6 +55,7 @@ type RawTopo struct {
 	RainsService       map[string]*RawSrvInfo `json:",omitempty"`
 	SIG                map[string]*RawSrvInfo `json:",omitempty"`
 	DiscoveryService   map[string]*RawSrvInfo `json:",omitempty"`
+	TimeService        map[string]*RawSrvInfo `json:",omitempty"`
 }
 
 type RawSrvInfo struct {

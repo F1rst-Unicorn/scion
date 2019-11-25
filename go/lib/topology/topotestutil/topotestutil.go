@@ -40,6 +40,9 @@ func AddServer(topo *topology.Topo, svc proto.ServiceType, name string,
 	case proto.ServiceType_ds:
 		topo.DSNames = append(topo.DSNames, name)
 		topo.DS[name] = topoAddr
+	case proto.ServiceType_ts:
+		topo.TSNames = append(topo.TSNames, name)
+		topo.TS[name] = topoAddr
 	default:
 		panic(fmt.Sprintf("service type error %v", svc))
 	}

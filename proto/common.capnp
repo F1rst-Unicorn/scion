@@ -21,4 +21,5 @@ enum ServiceType {
     br  @6;  # Border router
     sig @7;  # SCION-IP gateway
     hps @8;  # Hidden Path service
+    ts  @9;  # Time service
 }
