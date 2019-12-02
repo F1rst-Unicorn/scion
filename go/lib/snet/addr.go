@@ -68,7 +68,7 @@ func (a *Addr) String() string {
 	if a.Host == nil {
 		return fmt.Sprintf("%s,<nil>", a.IA)
 	}
-	return fmt.Sprintf("%s,[%v]:%v", a.IA, a.Host.L3, a.Host.L4)
+	return fmt.Sprintf("%s,%v", a.IA, a.Host)
 }
 
 func (a *Addr) Desc() string {

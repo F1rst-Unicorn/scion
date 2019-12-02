@@ -92,6 +92,12 @@ debug = true
 [metrics]
 Prometheus = "[127.0.0.1]:9105"
 `
+
+	ptpClientConfigTemplate = `
+--clientAddress {{ .ClientAddress }}
+--serverAddress {{ .ServerAddress }}
+`
+
 )
 
 var (
@@ -107,6 +113,12 @@ type templateContext struct {
 	IPAddress net.IP
 
 	ConfigDirectory string
+}
+
+type ptpTemplateContext struct {
+	ClientAddress *snet.Addr
+
+	ServerAddress *snet.Addr
 }
 
 func tryBootstrapping() (*topology.Topo, error) {
@@ -141,6 +153,11 @@ func tryBootstrapping() (*topology.Topo, error) {
 			}
 
 			err = fetchTRC(topo)
+			if err != nil {
+				return nil, err
+			}
+
+			err = generatePTPClientConfig(topo)
 			if err != nil {
 				return nil, err
 			}
@@ -197,6 +214,39 @@ func generateSciondConfig(topo *topology.Topo) error {
 	err = t.Execute(sciondFile, ctx)
 	if err != nil {
 		log.Error("Could template sciond config file", "err", err)
+		return err
+	}
+	return nil
+}
+
+func generatePTPClientConfig(topo *topology.Topo) error {
+	t := template.Must(template.New("config").Parse(ptpClientConfigTemplate))
+	file, err := os.OpenFile(cfg.SciondDirectory + "/ptpclient.toml", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Error("Could not open ptp client config file", "err", err)
+		return err
+	}
+	address := getIPAddress()
+	if address == nil {
+		return errors.New("")
+	}
+
+	randomTSID, err := topo.TSNames.GetRandom()
+	if err != nil {
+		log.Error("Could not get a time server", "err", err)
+		return err
+	}
+	ts := topo.TS.GetById(randomTSID)
+
+	ctx := ptpTemplateContext {
+		ClientAddress: &snet.Addr{IA: topo.ISD_AS, Host: &addr.AppAddr{L3: addr.HostFromIP(address), L4: addr.NewL4UDPInfo(0)}},
+
+		ServerAddress: &snet.Addr{IA: topo.ISD_AS, Host: ts.IPv4.PublicAddr()},
+	}
+
+	err = t.Execute(file, ctx)
+	if err != nil {
+		log.Error("Could template ptp client config file", "err", err)
 		return err
 	}
 	return nil
